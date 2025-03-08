@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reranking Results Viewer</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- DataTables CSS -->
+    <link href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <!-- Custom styling -->
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 20px;
+            background-color: #f5f8fa;
+        }
+        .container {
+            max-width: 1400px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            padding: 25px;
+            margin-bottom: 20px;
+        }
+        h1, h2, h3 {
+            color: #2c3e50;
+        }
+        .table-container {
+            margin-top: 20px;
+            overflow-x: auto;
+        }
+        .model-select {
+            margin-bottom: 15px;
+        }
+        .card {
+            margin-bottom: 15px;
+            border: none;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+        .card-header {
+            background-color: #f1f5f9;
+            font-weight: bold;
+        }
+        .nav-tabs {
+            margin-bottom: 15px;
+        }
+        .nav-link {
+            color: #3498db;
+        }
+        .nav-link.active {
+            font-weight: bold;
+        }
+        .highlight-positive {
+            color: #27ae60;
+            font-weight: bold;
+        }
+        .highlight-negative {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+        .highlight-cell {
+            background-color: #f8f9fa;
+        }
+        .stat-card {
+            background-color: #f1f5f9;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        .diff-value {
+            font-size: 1.1em;
+            font-weight: bold;
+        }
+        .file-input-container {
+            margin-bottom: 25px;
+            padding: 20px;
+            border: 2px dashed #dee2e6;
+            border-radius: 8px;
+            background-color: #f8f9fa;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4">Reranking Results Viewer</h1>
+
+        <div class="file-input-container">
+            <h3>Upload Data Files</h3>
+            <div class="mb-3">
+                <label for="responseFile" class="form-label">Responses JSON File:</label>
+                <input class="form-control" type="file" id="responseFile">
+            </div>
+            <div class="mb-3">
+                <label for="requestFile" class="form-label">Requests JSON File:</label>
+                <input class="form-control" type="file" id="requestFile">
+            </div>
+            <button id="loadData" class="btn btn-primary">Load Data</button>
+        </div>
+
+        <div id="content" style="display: none;">
+            <h2>Reranking Results</h2>
+            <ul class="nav nav-tabs" id="requestTabs">
+                <!-- Request tabs will be generated here -->
+            </ul>
+            
+            <div class="tab-content" id="requestTabContent">
+                <!-- Tab panes will be generated here -->
+            </div>
+
+            <h2 class="mt-5">Model Comparison</h2>
+            <div class="row">
+                <div class="col-md-5">
+                    <label for="model1Select">Select Model 1:</label>
+                    <select id="model1Select" class="form-select model-select"></select>
+                </div>
+                <div class="col-md-5">
+                    <label for="model2Select">Select Model 2:</label>
+                    <select id="model2Select" class="form-select model-select"></select>
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button id="compareButton" class="btn btn-primary w-100">Compare</button>
+                </div>
+            </div>
+
+            <div id="comparisonResults" class="mt-4" style="display: none;">
+                <h3>Comparison Results</h3>
+                <div class="card">
+                    <div class="card-header">
+                        Average Difference (<span id="model1Name"></span> vs <span id="model2Name"></span>)
+                    </div>
+                    <div class="card-body">
+                        <div id="averageDiff"></div>
+                    </div>
+                </div>
+                <div id="comparisonTable" class="table-container"></div>
+            </div>
+
+            <h2 class="mt-5">Overall Statistics</h2>
+            <div id="overallStats">
+                <p>No data loaded yet. Please upload files and click "Load Data".</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- jQuery -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <!-- Bootstrap Bundle with Popper -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- DataTables -->
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+
+    <script>
+        let responses = null;
+        let requests = null;
+        let currentRequestIdx = 0;
+        
+        // Event listeners
+        $(document).ready(function() {
+            $('#loadData').click(loadDataFromFiles);
+            $('#compareButton').click(compareModels);
+        });
+
+        function loadDataFromFiles() {
+            const responseFileInput = document.getElementById('responseFile');
+            const requestFileInput = document.getElementById('requestFile');
+            
+            if (!responseFileInput.files.length || !requestFileInput.files.length) {
+                alert('Please select both files first.');
+                return;
+            }
+            
+            const responseReader = new FileReader();
+            responseReader.onload = function(e) {
+                try {
+                    responses = JSON.parse(e.target.result);
+                    
+                    const requestReader = new FileReader();
+                    requestReader.onload = function(e) {
+                        try {
+                            requests = JSON.parse(e.target.result);
+                            
+                            if (responses && requests) {
+                                initializeApp();
+                            }
+                        } catch (error) {
+                            alert('Error parsing requests file: ' + error.message);
+                        }
+                    };
+                    requestReader.readAsText(requestFileInput.files[0]);
+                    
+                } catch (error) {
+                    alert('Error parsing responses file: ' + error.message);
+                }
+            };
+            responseReader.readAsText(responseFileInput.files[0]);
+        }
+        
+        function initializeApp() {
+            $('#content').show();
+            
+            // Get model names
+            const modelNames = Object.keys(responses);
+            
+            // Populate model selects
+            const modelSelect1 = $('#model1Select');
+            const modelSelect2 = $('#model2Select');
+            
+            modelSelect1.empty();
+            modelSelect2.empty();
+            
+            modelNames.forEach(model => {
+                modelSelect1.append(`<option value="${model}">${model}</option>`);
+                modelSelect2.append(`<option value="${model}">${model}</option>`);
+            });
+            
+            // Select different models by default if possible
+            if (modelNames.length > 1) {
+                modelSelect2.val(modelNames[1]);
+            }
+            
+            // Create request tabs
+            createRequestTabs();
+            
+            // Generate overall stats
+            generateOverallStats();
+            
+            // Show the first tab
+            showRequest(0);
+        }
+        
+        function createRequestTabs() {
+            const tabList = $('#requestTabs');
+            const tabContent = $('#requestTabContent');
+            
+            tabList.empty();
+            tabContent.empty();
+            
+            requests.forEach((request, idx) => {
+                // Create tab
+                const tabId = `request-${idx}`;
+                const isActive = idx === 0;
+                
+                const tabHeader = $(`
+                    <li class="nav-item">
+                        <a class="nav-link ${isActive ? 'active' : ''}" id="${tabId}-tab" 
+                           data-bs-toggle="tab" href="#${tabId}" role="tab" 
+                           aria-controls="${tabId}" aria-selected="${isActive}">Request ${idx + 1}</a>
+                    </li>
+                `);
+                
+                const tabPane = $(`
+                    <div class="tab-pane fade ${isActive ? 'show active' : ''}" id="${tabId}" 
+                         role="tabpanel" aria-labelledby="${tabId}-tab">
+                        <div class="card mb-3">
+                            <div class="card-header">Query</div>
+                            <div class="card-body">
+                                <p>${request.query.substring(0, 200)}...</p>
+                            </div>
+                        </div>
+                        <div id="table-${idx}" class="table-container"></div>
+                    </div>
+                `);
+                
+                tabList.append(tabHeader);
+                tabContent.append(tabPane);
+                
+                // Add event listener
+                $(`#${tabId}-tab`).on('click', function() {
+                    showRequest(idx);
+                });
+            });
+        }
+        
+        function showRequest(requestIdx) {
+            currentRequestIdx = requestIdx;
+            const tableContainer = $(`#table-${requestIdx}`);
+            tableContainer.empty();
+            
+            // Create table
+            const table = $(`
+                <table id="resultsTable-${requestIdx}" class="table table-striped table-bordered">
+                    <thead>
+                        <tr>
+                            <th>Model</th>
+                            ${createScoreHeaders(requestIdx)}
+                            <th>Avg Score</th>
+                            <th>Init Time</th>
+                            <th>Avg Rerank Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${createTableRows(requestIdx)}
+                    </tbody>
+                </table>
+            `);
+            
+            tableContainer.append(table);
+            
+            // Initialize DataTable
+            $(`#resultsTable-${requestIdx}`).DataTable({
+                order: [[getScoreHeadersCount(requestIdx) + 1, 'desc']], // Sort by Avg Score by default
+                responsive: true
+            });
+        }
+        
+        function getScoreHeadersCount(requestIdx) {
+            // Get number of scores for a particular request
+            const firstModel = Object.keys(responses)[0];
+            return responses[firstModel].scores[requestIdx].length;
+        }
+        
+        function createScoreHeaders(requestIdx) {
+            // Create headers for each score column
+            const scoreCount = getScoreHeadersCount(requestIdx);
+            let headers = '';
+            
+            for (let i = 0; i < scoreCount; i++) {
+                headers += `<th>Score ${i+1}</th>`;
+            }
+            
+            return headers;
+        }
+        
+        function createTableRows(requestIdx) {
+            // Create table rows for each model
+            let rows = '';
+            
+            Object.keys(responses).forEach(model => {
+                const modelData = responses[model];
+                const scores = modelData.scores[requestIdx];
+                const rerankTimes = modelData.rerank_times[requestIdx];
+                const initTime = modelData.init_time;
+                
+                // Calculate average score
+                const avgScore = scores.reduce((acc, val) => acc + val, 0) / scores.length;
+                
+                // Create the row
+                rows += `<tr>
+                    <td>${model}</td>
+                    ${scores.map(score => `<td>${score.toFixed(4)}</td>`).join('')}
+                    <td>${avgScore.toFixed(4)}</td>
+                    <td>${initTime.toFixed(4)}</td>
+                    <td>${typeof rerankTimes === 'object' ? 'N/A' : rerankTimes.toFixed(4)}</td>
+                </tr>`;
+            });
+            
+            return rows;
+        }
+        
+        function compareModels() {
+            const model1 = $('#model1Select').val();
+            const model2 = $('#model2Select').val();
+            
+            if (model1 === model2) {
+                alert('Please select different models to compare.');
+                return;
+            }
+            
+            $('#model1Name').text(model1);
+            $('#model2Name').text(model2);
+            
+            const comparisonTable = $('#comparisonTable');
+            comparisonTable.empty();
+            
+            // Create comparison table
+            const table = $(`
+                <table id="comparisonDataTable" class="table table-striped table-bordered">
+                    <thead>
+                        <tr>
+                            <th>Request</th>
+                            <th>${model1} Avg</th>
+                            <th>${model2} Avg</th>
+                            <th>Diff</th>
+                            <th>Score-wise Diffs</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${createComparisonRows(model1, model2)}
+                    </tbody>
+                </table>
+            `);
+            
+            comparisonTable.append(table);
+            
+            // Calculate and display average difference
+            const avgDiff = calculateAverageDifference(model1, model2);
+            $('#averageDiff').html(`
+                <div class="stat-card">
+                    <p>Average score difference across all requests: 
+                        <span class="diff-value ${avgDiff > 0 ? 'highlight-positive' : 'highlight-negative'}">
+                            ${avgDiff > 0 ? '+' : ''}${avgDiff.toFixed(4)}
+                        </span>
+                        (positive means ${model1} > ${model2})
+                    </p>
+                </div>
+            `);
+            
+            // Initialize DataTable
+            $('#comparisonDataTable').DataTable({
+                order: [[3, 'desc']], // Sort by diff by default
+                responsive: true
+            });
+            
+            $('#comparisonResults').show();
+        }
+        
+        function createComparisonRows(model1, model2) {
+            // Create table rows for comparison
+            let rows = '';
+            
+            requests.forEach((request, idx) => {
+                const model1Scores = responses[model1].scores[idx];
+                const model2Scores = responses[model2].scores[idx];
+                
+                // Calculate average scores
+                const model1Avg = model1Scores.reduce((acc, val) => acc + val, 0) / model1Scores.length;
+                const model2Avg = model2Scores.reduce((acc, val) => acc + val, 0) / model2Scores.length;
+                
+                // Calculate difference
+                const diff = model1Avg - model2Avg;
+                
+                // Calculate individual score differences
+                const scoreDiffs = model1Scores.map((score, i) => {
+                    const scoreDiff = score - model2Scores[i];
+                    return {
+                        index: i + 1,
+                        diff: scoreDiff
+                    };
+                });
+                
+                // Sort by absolute difference (largest first)
+                scoreDiffs.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+                
+                // Format score differences
+                const scoreDiffsHtml = scoreDiffs.map(sd => 
+                    `<span class="${sd.diff > 0 ? 'highlight-positive' : 'highlight-negative'}">
+                        Score ${sd.index}: ${sd.diff > 0 ? '+' : ''}${sd.diff.toFixed(4)}
+                    </span>`
+                ).join('<br>');
+                
+                // Create the row
+                rows += `<tr>
+                    <td>Request ${idx + 1}</td>
+                    <td>${model1Avg.toFixed(4)}</td>
+                    <td>${model2Avg.toFixed(4)}</td>
+                    <td class="${diff > 0 ? 'highlight-positive' : 'highlight-negative'}">
+                        ${diff > 0 ? '+' : ''}${diff.toFixed(4)}
+                    </td>
+                    <td>${scoreDiffsHtml}</td>
+                </tr>`;
+            });
+            
+            return rows;
+        }
+        
+        function calculateAverageDifference(model1, model2) {
+            let totalDiff = 0;
+            let count = 0;
+            
+            requests.forEach((_, idx) => {
+                const model1Scores = responses[model1].scores[idx];
+                const model2Scores = responses[model2].scores[idx];
+                
+                // Calculate average scores for this request
+                const model1Avg = model1Scores.reduce((acc, val) => acc + val, 0) / model1Scores.length;
+                const model2Avg = model2Scores.reduce((acc, val) => acc + val, 0) / model2Scores.length;
+                
+                totalDiff += (model1Avg - model2Avg);
+                count++;
+            });
+            
+            return count > 0 ? totalDiff / count : 0;
+        }
+        
+        function generateOverallStats() {
+            const overallStats = $('#overallStats');
+            overallStats.empty();
+            
+            const modelNames = Object.keys(responses);
+            
+            // Create pairs of models to compare
+            let comparisonResults = [];
+            
+            for (let i = 0; i < modelNames.length; i++) {
+                for (let j = i + 1; j < modelNames.length; j++) {
+                    const model1 = modelNames[i];
+                    const model2 = modelNames[j];
+                    const avgDiff = calculateAverageDifference(model1, model2);
+                    
+                    comparisonResults.push({
+                        model1,
+                        model2,
+                        avgDiff
+                    });
+                }
+            }
+            
+            // Sort by absolute difference
+            comparisonResults.sort((a, b) => Math.abs(b.avgDiff) - Math.abs(a.avgDiff));
+            
+            // Generate stats cards
+            const statsCards = comparisonResults.map(result => `
+                <div class="col-md-6 col-lg-4">
+                    <div class="stat-card">
+                        <h5>${result.model1} vs ${result.model2}</h5>
+                        <p>Average difference: 
+                            <span class="diff-value ${result.avgDiff > 0 ? 'highlight-positive' : 'highlight-negative'}">
+                                ${result.avgDiff > 0 ? '+' : ''}${result.avgDiff.toFixed(4)}
+                            </span>
+                        </p>
+                    </div>
+                </div>
+            `).join('');
+            
+            overallStats.html(`
+                <div class="card">
+                    <div class="card-header">Model Differences</div>
+                    <div class="card-body">
+                        <div class="row">
+                            ${statsCards}
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card mt-4">
+                    <div class="card-header">Initialization Times</div>
+                    <div class="card-body">
+                        <div class="row">
+                            ${generateInitTimeStats()}
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card mt-4">
+                    <div class="card-header">Rerank Times</div>
+                    <div class="card-body">
+                        <div class="row">
+                            ${generateRerankTimeStats()}
+                        </div>
+                    </div>
+                </div>
+            `);
+        }
+        
+        function generateInitTimeStats() {
+            const modelNames = Object.keys(responses);
+            
+            // Calculate init times
+            const initTimes = modelNames.map(model => ({
+                model,
+                initTime: responses[model].init_time
+            }));
+            
+            // Sort by init time (fastest first)
+            initTimes.sort((a, b) => a.initTime - b.initTime);
+            
+            // Generate stats cards
+            return initTimes.map(item => `
+                <div class="col-md-6 col-lg-4">
+                    <div class="stat-card">
+                        <h5>${item.model}</h5>
+                        <p>Init time: <span class="diff-value">${item.initTime.toFixed(4)}s</span></p>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function generateRerankTimeStats() {
+            const modelNames = Object.keys(responses);
+            
+            // Calculate average rerank times
+            const rerankTimes = modelNames.map(model => {
+                let total = 0;
+                let count = 0;
+                
+                responses[model].rerank_times.forEach(time => {
+                    if (typeof time === 'number') {
+                        total += time;
+                        count++;
+                    }
+                });
+                
+                return {
+                    model,
+                    avgRerankTime: count > 0 ? total / count : 0
+                };
+            });
+            
+            // Sort by rerank time (fastest first)
+            rerankTimes.sort((a, b) => a.avgRerankTime - b.avgRerankTime);
+            
+            // Generate stats cards
+            return rerankTimes.map(item => `
+                <div class="col-md-6 col-lg-4">
+                    <div class="stat-card">
+                        <h5>${item.model}</h5>
+                        <p>Avg rerank time: <span class="diff-value">${item.avgRerankTime.toFixed(4)}s</span></p>
+                    </div>
+                </div>
+            `).join('');
+        }
+    </script>
+</body>
+</html>
